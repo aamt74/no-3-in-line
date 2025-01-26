@@ -1,0 +1,38 @@
+// https://code.visualstudio.com/docs/getstarted/settings
+{
+  // Ruler colors
+  "workbench.colorCustomizations": {
+    "editorRuler.foreground": "#43adf3"
+  },
+  // Filter explorer view in vscode
+  "files.exclude": {
+    ".vscode": false,
+  },
+  // Make sure these files associate with custom formatting
+  "files.associations": {
+    "*.json": "jsonc"
+  },
+  // Default editor settings, not particular to any language
+  "editor.detectIndentation": false,
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.formatOnSave": true,
+  // Markdown specific editor settings
+  "[markdown]": {
+    "editor.wordWrap": "wordWrapColumn",
+    "editor.wrappingIndent": "same",
+    "editor.wordWrapColumn": 80,
+    "editor.rulers": [
+      80
+    ]
+  },
+  // Config files specific editor settings
+  "[properties]": {
+    "editor.rulers": [
+      80
+    ]
+  },
+  // Latex configurations
+  "latex-workshop.latex.outDir": "build",
+  "latex-workshop.formatting.latex": "latexindent"
+}
