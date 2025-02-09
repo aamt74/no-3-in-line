@@ -1,7 +1,6 @@
 import math
 from dataclasses import dataclass
 from typing import Set, TypeAlias, Tuple
-from constants import EPSILON
 
 # Origin down left, for example (lattice 2*2):
 #
@@ -28,10 +27,23 @@ class Lattice:
 
     @dataclass(frozen=True)
     class Line:
-        """A line in a lattice, determined by its extremes"""
+        """A line in a lattice, (end1.col <= end2.col)"""
         end1: "Lattice.Point"
         end2: "Lattice.Point"
-        slope: float
+        rise: int
+        run: int
+        @property
+        def slope(self) -> float:
+            return math.inf if self.run == 0 else 1.0 * self.rise / self.run
+        @property
+        def is_vertical(self) -> bool:
+            return self.run == 0
+        @property
+        def is_horizontal(self) -> bool:
+            return self.run != 0 and self.rise == 0
+        @property
+        def is_slanted(self) -> bool:
+            return self.run != 0 and self.rise != 0
         def __repr__(self):
             return '{2:5.2f} : {0} --> {1}'.format(self.end1, self.end2, self.slope)
     
@@ -55,7 +67,7 @@ class Lattice:
 
     def __getitem__(self, row_col: Tuple[int, int]):
         """Index operator, used like 'pt = lattice_instance[row, col]'"""
-        (row, col) = row_col
+        row, col = row_col
         return self._points[(row - 1) * self._N + (col - 1)]
     
     @property
@@ -76,28 +88,30 @@ class Lattice:
     def expand_line(self, line: "Lattice.Line") -> PointList:
         """Enumerates all points on a line within the lattice"""
         points_on_line: Lattice.PointList = []
-        if line.slope == math.inf:
-            for row in range(self._N):
-                pt = self[row, line.end1.col] #self._points[row * self._N + (line.end1.col - 1)]
+        if line.is_vertical:
+            for row in range(1, self._N + 1):
+                pt = self[row, line.end1.col]
                 points_on_line.append(pt)
-        elif math.isclose(a=line.slope, b=0, abs_tol=EPSILON):
-            for col in range(self._N):
-                pt = self[line.end1.row, col] #lattice[(line.end1.row - 1) * N + col]
+            return points_on_line
+        elif line.is_horizontal:
+            for col in range(1, self._N + 1):
+                pt = self[line.end1.row, col]
                 points_on_line.append(pt)
-        else:
+            return points_on_line
+        elif line.is_slanted:
             points_on_line.append(line.end1)
             pt = line.end1
-            frac_row = float(pt.row)
+            row = pt.row
             col = pt.col
             while pt != line.end2:
-                col += 1 # make use of columns from calc_extremes go up
-                frac_row += line.slope
-                row = round(frac_row)
-                if math.isclose(a=frac_row-row, b=0, abs_tol=EPSILON):
-                    pt = self[row, col] #lattice[(row - 1) * N + (col - 1)]
-                    points_on_line.append(pt)
-        return points_on_line
-    
+                row += line.rise
+                col += line.run
+                pt = self[row, col]
+                points_on_line.append(pt)
+            return points_on_line
+        else:
+            raise ValueError("Line created from a single point?")
+        
     #endregion
 
     #region private
@@ -106,56 +120,48 @@ class Lattice:
         points: Lattice.PointList = []
         for row in range(1, self._N + 1):
             for col in range(1, self._N + 1):
-                points.append(Lattice.Point(row, col))
+                pt = Lattice.Point(row, col)
+                points.append(pt)
         return points
     
     def _create_lines(self) -> LineList:
-        extremes: Set[Lattice.Line] = set()  # use set so that the extremes uniquely determine a lines!
+        lines: Set[Lattice.Line] = set()  # use set so that the extremes uniquely determine a lines!
         for i in range(len(self._points)):
             for j in range(i+1, len(self._points)):
-                slope = self._calc_slope(self._points[i], self._points[j])
-                ext = self._calc_extremes(self._points[i], self._points[j], slope)
-                extremes.add(Lattice.Line(end1=ext[0], end2=ext[1], slope=slope))
-        sorted = list(extremes)
+                rise, run = self._calc_slope(self._points[i], self._points[j])
+                end1, end2 = self._calc_extremes(self._points[i], self._points[j], rise, run)
+                l = Lattice.Line(end1, end2, rise, run)
+                lines.add(l)
+        sorted = list(lines)
         sorted.sort(key=lambda x: x.slope)
         return sorted
     
-    def _calc_slope(self, pt_from: "Lattice.Point", pt_to: "Lattice.Point") -> float:
+    def _calc_slope(self, pt_from: "Lattice.Point", pt_to: "Lattice.Point") -> Tuple[int, int]:
         rise = pt_to.row - pt_from.row
         run = pt_to.col - pt_from.col
         if run == 0:
-            return math.inf
+            return (rise, run)
         gcd = math.gcd(rise, run)
-        rise = rise / gcd
-        run = run / gcd
-        return 1.0 * rise / run
+        rise = rise // gcd
+        run = run // gcd
+        return (rise, run)
 
-    def _calc_extremes(self, pt1: "Lattice.Point", pt2: "Lattice.Point", slope: float) -> PointPair:
-        # make sure column is going up
-        if pt1.col > pt2.col:
-            pt1, pt2 = pt2, pt1 # trick to swap
-        # calc the slope, dealing with vert, hor and sloped lines
-        if slope == math.inf:
+    def _calc_extremes(self, pt1: "Lattice.Point", pt2: "Lattice.Point", rise: int, run: int) -> PointPair:
+        if pt1.col > pt2.col: # make sure column is going up
+            pt1, pt2 = pt2, pt1
+        if run == 0: # vertical
             return (Lattice.Point(row=1, col=pt1.col),
                     Lattice.Point(row=self._N, col=pt1.col))
-        elif math.isclose(a=slope, b=0, abs_tol=EPSILON):
+        elif rise == 0: # horizontal
             return (Lattice.Point(row=pt1.row, col=1),
                     Lattice.Point(row=pt1.row, col=self._N))
-        else:
+        else: # slanted
             end1 = Lattice.Point(**pt1.__dict__) # clone
+            while 1 <= end1.col - run <= self._N and 1 <= end1.row - rise <= self._N:
+                end1 = Lattice.Point(end1.row - rise, end1.col - run)
             end2 = Lattice.Point(**pt2.__dict__) # clone
-            frac_row = float(pt1.row)
-            for col in reversed(range(1, pt1.col)):
-                frac_row -= slope
-                row = round(frac_row)
-                if math.isclose(a=frac_row-row, b=0, abs_tol=EPSILON) and 1 <= row <= self._N:
-                    end1 = Lattice.Point(row, col)
-            frac_row = float(pt2.row)
-            for col in range(pt2.col+1, self._N+1):
-                frac_row += slope
-                row = round(frac_row)
-                if math.isclose(a=frac_row-row, b=0, abs_tol=EPSILON) and 1 <= row <= self._N:
-                    end2 = Lattice.Point(row, col)
+            while 1 <= end2.col + run <= self._N and 1 <= end2.row + rise <= self._N:
+                end2 = Lattice.Point(end2.row + rise, end2.col + run)
             return (end1, end2)
     
     #endregion
