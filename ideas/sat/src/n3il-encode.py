@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 
-import sys, argparse
+import sys, argparse, shlex, os
 from itertools import combinations
 from typing import List, Dict, Tuple
 from constants import FAIL
 from lattice import Lattice
+from symmetry import Symmetry, calc_equiv_points
 
 
-def encode(N: int, verbose: bool):
+def encode(N: int, symmetry: Symmetry, verbose: bool):
     """Encodes the no-three-in-line problem as a SAT problem"""
     
     # Containers to collect the necessary vars, comments and clauses
@@ -19,17 +20,26 @@ def encode(N: int, verbose: bool):
     point_to_var_map: Dict[Lattice.Point, int] = {}
     pair_to_var_map: Dict[Tuple[Lattice.Point, Lattice.Point], int] = {}
 
-    # Construct the lattice. This is heavy if N is large. (TODO: multithreading)
+    # Construct the lattice and the point symmetry map.
     lattice = Lattice(N)
-
+    mirror_map = calc_equiv_points(lattice, symmetry)
+    
     # Collect all the vars for the points
     if verbose:
         comments.append("POINTS:")
     for pt in lattice.points:
-        nof_vars += 1
-        point_to_var_map[pt] = nof_vars
-        if verbose:
-            comments.append("x{} := {}".format(nof_vars, pt))
+        if pt not in mirror_map:
+            nof_vars += 1
+            point_to_var_map[pt] = nof_vars
+            if verbose:
+                comments.append("x{} := {}".format(nof_vars, pt))
+    for pt in lattice.points:
+        if pt in mirror_map:
+            orig_pt = mirror_map[pt]
+            orig_var = point_to_var_map[orig_pt]
+            point_to_var_map[pt] = orig_var
+            if verbose:
+                comments.append("x{} ~= {} (symmetry)".format(orig_var, pt))
 
     # Collect all vars and clauses for the pairs and their relationship with points
     if verbose:
@@ -59,21 +69,15 @@ def encode(N: int, verbose: bool):
 
         # at least one of the pairs must be true on the hor/vert lines
         if line.is_vertical or line.is_horizontal :
-            # if verbose:
-            #     cls.append("at least one pair on a line must be true:")
             cls.append([pair_to_var_map[pair] for pair in combinations(points_on_line, 2)])
         
         # no pair of pairs can be true on any line, in particular on the current line
         if len(vars_for_line) > 1:
-            # if verbose:
-            #     cls.append("at most one pair on a line can be true:")
             for pair_of_pair in combinations(vars_for_line, 2):
                 cls.append([-pair_of_pair[0], -pair_of_pair[1]])
         
         # x_n = 1 iff its two points are set too (hence if x_n = -1, then at least one of the points is not set)
         # note: pair_n <=> pt_i && pt_j SAME AS (-pair_n || pt_i) && (-pair_n || pt_j) && (-pt_i || -pt_j || pair_n)
-        # if verbose:
-        #     cls.append("relate pair variable to its point variables:")
         for pair in combinations(points_on_line, 2):
             pair_var = pair_to_var_map[pair]
             pt1_var = point_to_var_map[pair[0]]
@@ -85,8 +89,9 @@ def encode(N: int, verbose: bool):
         if verbose:
             cls.append("--------------------")
 
-    # Output the DIMACS CNF representation    
-    print("c SAT-encoding for the no-three-in-line problem of N=%d" % N)
+    # Output the DIMACS CNF representation
+    symm_str = "{}".format(symmetry).replace('Symmetry.', '')
+    print("c SAT-encoding for the no-three-in-line problem of N=%d (%s)" % (N, symm_str))
     print("p cnf %d %d" % (nof_vars, len(cls)))
     for msg in comments:
         print("c {}".format(msg))
@@ -99,6 +104,13 @@ def encode(N: int, verbose: bool):
 
 if __name__ == '__main__':
     try:
+        # VSCode's ${command:pickArgs} is passed as one string, split it up
+        argv = (
+            shlex.split(" ".join(sys.argv[1:]))
+            if "USED_VSCODE_COMMAND_PICKARGS" in os.environ
+            else sys.argv[1:]
+        )
+
         # Parse cli options and arguments
         parser = argparse.ArgumentParser(
             prog="n3il-encode.py",
@@ -106,9 +118,13 @@ if __name__ == '__main__':
             epilog="For more information, please consult README.md")
         parser.add_argument("-v", "--verbose", help="add comments to output", action="store_true")
         parser.add_argument("N", type=int, help="the size of the N*N square lattice")
-        args = parser.parse_args()
+        parser.add_argument("symmetry", type=str, help="flammenkamp's symmetry encoding (. : / - o c x + *)")
+        args = parser.parse_args(args=argv)
+
         # Run encoder
-        encode(vars(args)["N"], args.verbose)
+        encode(vars(args)["N"], 
+               Symmetry(vars(args)["symmetry"]),
+               args.verbose)
     except Exception as ex:
         print('error')
         sys.exit(FAIL)
