@@ -1,0 +1,6 @@
+name: n3ilsat
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pypng

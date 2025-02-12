@@ -3,7 +3,7 @@
 # ---------------------------------------------------- IMPORTS --------------------------------------------------------
 #region
 
-import sys, argparse, shlex, os, math
+import sys, argparse, shlex, os, math, png
 from itertools import combinations
 from typing import Set, TypeAlias, Tuple, Dict, List
 from dataclasses import dataclass
@@ -310,18 +310,41 @@ if __name__ == '__main__':
 
         # Parse cli options and arguments
         parser = argparse.ArgumentParser(
-            prog="n3il-encode.py",
-            description="Encodes the 'no-three-in-line' problem as a SAT problem in DIMACS format",
-            epilog="For more information, please consult README.md")
+            prog="n3ilsat.py",
+            description="Solves the 'no-three-in-line' problem using SAT.\n"
+                        "Encode writes problem as dimacs to stdout.\n"
+                        "Decode reads solution in dimacs from stdin.\n",
+            epilog="For more information, please consult README.md",
+            formatter_class=argparse.RawTextHelpFormatter)
         parser.add_argument("-v", "--verbose", help="add comments to output", action="store_true")
+        parser.add_argument("--png", help="generate png while decoding", action="store_true")
+        parser.add_argument("verb", choices=['encode', 'decode'], help="encode/decode to/from dimacs")
         parser.add_argument("N", type=int, help="the size of the N*N square lattice")
-        parser.add_argument("symmetry", type=str, help="flammenkamp's symmetry encoding (. : / - o c x + *)")
+        parser.add_argument("symmetry", type=str, help="flammenkamp's (. : / - o c x + *)")
         args = parser.parse_args(args=argv)
 
-        # Run encoder
-        encode(vars(args)["N"], 
-               Symmetry(vars(args)["symmetry"]),
-               args.verbose)
+        # Run
+        match vars(args)['verb']:
+            case 'encode':
+                encode(vars(args)["N"], 
+                       Symmetry(vars(args)["symmetry"]),
+                       args.verbose)
+            case 'decode':
+                # example how to read from stdin
+                for line in sys.stdin:
+                   print(line.rstrip())
+                # example using pypng
+                width = 255
+                height = 255
+                img = []
+                for y in range(height):
+                    row = ()
+                    for x in range(width):
+                        row = row + (x, max(0, 255 - x - y), y)
+                    img.append(row)
+                with open('gradient.png', 'wb') as f:
+                    w = png.Writer(width, height, greyscale=False)
+                    w.write(f, img)
     except Exception as ex:
         print('error')
         sys.exit(FAIL)
