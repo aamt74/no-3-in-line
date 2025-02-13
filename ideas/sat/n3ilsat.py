@@ -17,6 +17,7 @@ from enum import Enum
 OK = 0          # return code if program runs without error
 FAIL = 1        # return code if program runs erroneously
 EPSILON = 1e-10 # accuracy in comparing floating points
+PNG_FACTOR = 20 # in png every lattice point is scaled with this factor
 
 #endregion
 
@@ -122,6 +123,28 @@ class Lattice:
                 result.append(line)
         return result
 
+    def verify(self, placed_points: "PointList") -> bool:
+        """Checks if (1) h/v lines have 2 pts and (2) no slanted line has more than 2 pts"""
+        nof_pt_on_line: Dict[Lattice.Line, int] = {}
+        for point in placed_points:
+            incident_lines = self.incidents(point)
+            for line in incident_lines:
+                if line not in nof_pt_on_line:
+                    nof_pt_on_line[line] = 1
+                else:
+                    nof_pt_on_line[line] += 1
+        is_valid = True
+        for line, incidents in nof_pt_on_line.items():
+            if line.is_slanted:
+                if incidents > 2:
+                    is_valid = False
+                    break
+            else: # hor or ver line
+                if incidents != 2:
+                    is_valid = False
+                    break
+        return is_valid
+
     def _create_points(self) -> PointList:
         points: Lattice.PointList = []
         for row in range(1, self._N + 1):
@@ -204,6 +227,42 @@ def calc_equiv_points(lattice: Lattice, config: Symmetry) -> Dict[Lattice.Point,
         case _:
             raise NotImplementedError('TODO: implement symmetry case')
     return result
+
+#endregion
+
+# ---------------------------------------------------- IMAGING --------------------------------------------------------
+#region
+
+def create_png(N: int, placed_points: Lattice.PointList):
+    width = N * PNG_FACTOR + N + 1
+    height = N * PNG_FACTOR + N + 1
+    img = []
+    pixrow = ()
+    for _ in range(width):
+        pixrow = pixrow + (0, 0, 0)
+    img.append(pixrow)
+    for row in range(1,N+1):
+        pixrow = ()
+        pixrow = pixrow + (0, 0, 0)
+        for col in range(1,N+1):
+            if Lattice.Point(row, col) in placed_points:
+                for xrepeat in range(PNG_FACTOR):
+                    pixrow = pixrow + (255, 0, 0)
+                pixrow = pixrow + (0, 0, 0)
+            else:
+                for xrepeat in range(PNG_FACTOR):
+                    pixrow = pixrow + (255, 255, 255)
+                pixrow = pixrow + (0, 0, 0)
+        for yrepeat in range(PNG_FACTOR):  
+            img.append(pixrow)
+        pixrow = ()
+        for _ in range(width):
+            pixrow = pixrow + (0, 0, 0)
+        img.append(pixrow)
+        
+    with open('{}x{}-solution.png'.format(N, N), 'wb') as f:
+        w = png.Writer(width, height, greyscale=False)
+        w.write(f, img)
 
 #endregion
 
@@ -308,44 +367,24 @@ def encode(N: int, symmetry: Symmetry, verbose: bool):
 # ----------------------------------------------------- DECODE --------------------------------------------------------
 #region
 
-def verify(nof_pt_on_line: Dict[Lattice.Line, int]) -> bool:
-    """Checks if (1) h/v lines have 2 pts and (2) no slanted line has more than 2 pts"""
-    is_valid = True
-    for line, incidents in nof_pt_on_line.items():
-        if line.is_slanted:
-            if incidents > 2:
-                is_valid = False
-                break
-        else: # hor or ver line
-            if incidents != 2:
-                is_valid = False
-                break
-    return is_valid
-    
-
-def decode_iden(lattice: Lattice, sat_model: List[int]) -> Dict[Lattice.Line, int]:
+def decode_iden(N: int, sat_model: List[int]) -> Lattice.PointList:
     """Decodes the sat model, knowing that it was generated with identity symmetry"""
-    nof_pt_on_line: Dict[Lattice.Line, int] = {}
+    placed_points: Lattice.PointList = []
     row = 1
     col = 1
     for var in sat_model:
         if var > 0:
-            incident_lines = lattice.incidents(Lattice.Point(row, col))
-            for line in incident_lines:
-                if line not in nof_pt_on_line:
-                    nof_pt_on_line[line] = 1
-                else:
-                    nof_pt_on_line[line] += 1
+            placed_points.append(Lattice.Point(row, col))
         col += 1
-        if col > lattice.N:
+        if col > N:
             col = 1
             row += 1
-        if row > lattice.N:
+        if row > N:
             break
-    return nof_pt_on_line
+    return placed_points
 
 
-def decode_rot4(lattice: Lattice, sat_model: List[int]) -> Dict[Lattice.Line, int]:
+def decode_rot4(N: int, sat_model: List[int]) -> Lattice.PointList:
     """Decodes the sat model, knowing that it was generated with rot4 symmetry"""
     pass
 
@@ -360,31 +399,21 @@ def decode(N: int, config: Symmetry, _: bool, emit_png: bool):
     sat_model = [int(x) for x in model_str.split(' ')]
 
     # decode
-    lattice = Lattice(N)
-    nof_pt_on_line: Dict[Lattice.Line, int] = {}
+    placed_points: Lattice.PointList
     match config:
-       case Symmetry.IDEN: nof_pt_on_line = decode_iden(lattice, sat_model)
-       case Symmetry.ROT4: nof_pt_on_line = decode_rot4(lattice, sat_model)
+       case Symmetry.IDEN: placed_points = decode_iden(N, sat_model)
+       case Symmetry.ROT4: placed_points = decode_rot4(N, sat_model)
        case _:
            raise NotImplementedError('TODO: implement symmetry case')
 
     # verify
-    is_valid = verify(nof_pt_on_line)
+    lattice = Lattice(N)
+    is_valid = lattice.verify(placed_points)
     print("valid" if is_valid else "not valid")
 
-    # example using pypng
+    # emit desired output formats
     if emit_png:    
-        width = 255
-        height = 255
-        img = []
-        for y in range(height):
-            row = ()
-            for x in range(width):
-                row = row + (x, max(0, 255 - x - y), y)
-            img.append(row)
-        with open('gradient.png', 'wb') as f:
-            w = png.Writer(width, height, greyscale=False)
-            w.write(f, img)
+        create_png(N, placed_points)
 
 #endregion
 
