@@ -386,7 +386,23 @@ def decode_iden(N: int, sat_model: List[int]) -> Lattice.PointList:
 
 def decode_rot4(N: int, sat_model: List[int]) -> Lattice.PointList:
     """Decodes the sat model, knowing that it was generated with rot4 symmetry"""
-    pass
+    placed_points: Lattice.PointList = []
+    row = 1
+    col = 1
+    parity = 1 if N % 2 == 1 else 0
+    for var in sat_model:
+        if var > 0:
+            placed_points.append(Lattice.Point(row, col))
+            placed_points.append(Lattice.Point(N - col + 1, row))
+            placed_points.append(Lattice.Point(N - row + 1, N - col + 1))
+            placed_points.append(Lattice.Point(col, N - row + 1))
+        col += 1
+        if col > N // 2 + parity:
+            col = 1
+            row += 1
+        if row > N // 2:
+            break
+    return placed_points
 
 
 def decode(N: int, config: Symmetry, _: bool, emit_png: bool):
@@ -461,7 +477,6 @@ if __name__ == '__main__':
                 
     except Exception as ex:
         print('error')
-        print(ex)
         sys.exit(FAIL)
 
 #endregion
