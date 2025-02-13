@@ -113,6 +113,15 @@ class Lattice:
         else:
             raise ValueError("Line created from a single point?")
     
+    def incidents(self, point: "Lattice.Point") -> LineList:
+        """Enumerates all lines a point is incident with"""
+        result: Lattice.LineList = []
+        for line in self._lines:
+            points_on_line = self.expand_line(line)
+            if point in points_on_line:
+                result.append(line)
+        return result
+
     def _create_points(self) -> PointList:
         points: Lattice.PointList = []
         for row in range(1, self._N + 1):
@@ -296,8 +305,108 @@ def encode(N: int, symmetry: Symmetry, verbose: bool):
 
 #endregion
 
+# ----------------------------------------------------- DECODE --------------------------------------------------------
+#region
+
+def verify(nof_pt_on_line: Dict[Lattice.Line, int]) -> bool:
+    """Checks if (1) h/v lines have 2 pts and (2) no slanted line has more than 2 pts"""
+    is_valid = True
+    for line, incidents in nof_pt_on_line.items():
+        if line.is_slanted:
+            if incidents > 2:
+                is_valid = False
+                break
+        else: # hor or ver line
+            if incidents != 2:
+                is_valid = False
+                break
+    return is_valid
+    
+
+def decode_iden(lattice: Lattice, sat_model: List[int]) -> Dict[Lattice.Line, int]:
+    """Decodes the sat model, knowing that it was generated with identity symmetry"""
+    nof_pt_on_line: Dict[Lattice.Line, int] = {}
+    row = 1
+    col = 1
+    for var in sat_model:
+        if var > 0:
+            incident_lines = lattice.incidents(Lattice.Point(row, col))
+            for line in incident_lines:
+                if line not in nof_pt_on_line:
+                    nof_pt_on_line[line] = 1
+                else:
+                    nof_pt_on_line[line] += 1
+        col += 1
+        if col > lattice.N:
+            col = 1
+            row += 1
+        if row > lattice.N:
+            break
+    return nof_pt_on_line
+
+
+def decode_rot4(lattice: Lattice, sat_model: List[int]) -> Dict[Lattice.Line, int]:
+    """Decodes the sat model, knowing that it was generated with rot4 symmetry"""
+    pass
+
+
+def decode(N: int, config: Symmetry, _: bool, emit_png: bool):
+    """Read SAT-model from stdin, check if proper solution, and optionally emit png"""
+
+    # read SAT-model
+    model_str: str = ''
+    for line in sys.stdin:
+        model_str += line.rstrip()
+    sat_model = [int(x) for x in model_str.split(' ')]
+
+    # decode
+    lattice = Lattice(N)
+    nof_pt_on_line: Dict[Lattice.Line, int] = {}
+    match config:
+       case Symmetry.IDEN: nof_pt_on_line = decode_iden(lattice, sat_model)
+       case Symmetry.ROT4: nof_pt_on_line = decode_rot4(lattice, sat_model)
+       case _:
+           raise NotImplementedError('TODO: implement symmetry case')
+
+    # verify
+    is_valid = verify(nof_pt_on_line)
+    print("valid" if is_valid else "not valid")
+
+    # example using pypng
+    if emit_png:    
+        width = 255
+        height = 255
+        img = []
+        for y in range(height):
+            row = ()
+            for x in range(width):
+                row = row + (x, max(0, 255 - x - y), y)
+            img.append(row)
+        with open('gradient.png', 'wb') as f:
+            w = png.Writer(width, height, greyscale=False)
+            w.write(f, img)
+
+#endregion
+
 # -------------------------------------------------- APPLICATION ------------------------------------------------------
 #region
+
+def create_options() -> argparse.ArgumentParser:
+    """Setup the options that the application accepts"""
+    parser = argparse.ArgumentParser(
+        prog="n3ilsat.py",
+        description="Solves the 'no-three-in-line' problem using SAT.\n"
+                    "Encode writes problem as dimacs to stdout.\n"
+                    "Decode reads solution in dimacs from stdin.\n",
+        epilog="For more information, please consult README.md",
+        formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument("-v", "--verbose", help="add comments to output", action="store_true")
+    parser.add_argument("--png", help="generate png while decoding", action="store_true")
+    parser.add_argument("verb", choices=['encode', 'decode'], help="encode/decode to/from dimacs")
+    parser.add_argument("N", type=int, help="the size of the N*N square lattice")
+    parser.add_argument("symmetry", type=str, help="flammenkamp's (. : / - o c x + *)")
+    return parser
+
 
 if __name__ == '__main__':
     try:
@@ -309,44 +418,21 @@ if __name__ == '__main__':
         )
 
         # Parse cli options and arguments
-        parser = argparse.ArgumentParser(
-            prog="n3ilsat.py",
-            description="Solves the 'no-three-in-line' problem using SAT.\n"
-                        "Encode writes problem as dimacs to stdout.\n"
-                        "Decode reads solution in dimacs from stdin.\n",
-            epilog="For more information, please consult README.md",
-            formatter_class=argparse.RawTextHelpFormatter)
-        parser.add_argument("-v", "--verbose", help="add comments to output", action="store_true")
-        parser.add_argument("--png", help="generate png while decoding", action="store_true")
-        parser.add_argument("verb", choices=['encode', 'decode'], help="encode/decode to/from dimacs")
-        parser.add_argument("N", type=int, help="the size of the N*N square lattice")
-        parser.add_argument("symmetry", type=str, help="flammenkamp's (. : / - o c x + *)")
+        parser = create_options()
         args = parser.parse_args(args=argv)
+        N = vars(args)['N']
+        config = Symmetry(vars(args)["symmetry"])
+        verbose = args.verbose
+        emit_png = args.png
 
         # Run
         match vars(args)['verb']:
-            case 'encode':
-                encode(vars(args)["N"], 
-                       Symmetry(vars(args)["symmetry"]),
-                       args.verbose)
-            case 'decode':
-                # example how to read from stdin
-                for line in sys.stdin:
-                   print(line.rstrip())
-                # example using pypng
-                width = 255
-                height = 255
-                img = []
-                for y in range(height):
-                    row = ()
-                    for x in range(width):
-                        row = row + (x, max(0, 255 - x - y), y)
-                    img.append(row)
-                with open('gradient.png', 'wb') as f:
-                    w = png.Writer(width, height, greyscale=False)
-                    w.write(f, img)
+            case 'encode': encode(N, config, verbose)
+            case 'decode': decode(N, config, verbose, emit_png)
+                
     except Exception as ex:
         print('error')
+        print(ex)
         sys.exit(FAIL)
 
 #endregion
