@@ -137,6 +137,8 @@ class Lattice:
         for line, incidents in nof_pt_on_line.items():
             if line.is_slanted:
                 if incidents > 2:
+                    print(line, line.run, line.rise)
+                    print(incidents)
                     is_valid = False
                     break
             else: # hor or ver line
@@ -211,19 +213,19 @@ class Symmetry(Enum):
     FULL = '*'
 
 
-def calc_equiv_points(lattice: Lattice, config: Symmetry) -> Dict[Lattice.Point, Lattice.Point]:
+def calc_equiv_points(lat: Lattice, sym: Symmetry) -> Dict[Lattice.Point, Lattice.Point]:
     """Calculates a dictionary that maps a mirrored point to the point which value it takes over"""
     result: Dict[Lattice.Point, Lattice.Point] = {}
-    parity = 1 if lattice.N % 2 == 1 else 0
-    match config:
+    parity = 1 if lat.N % 2 == 1 else 0
+    match sym:
         case Symmetry.IDEN:
             pass
         case Symmetry.ROT4:
-            for row in range(1, lattice.N // 2 + 1):
-                for col in range(1, lattice.N // 2 + parity + 1):
-                    result[lattice[lattice.N - col + 1, row]] = lattice[row, col]
-                    result[lattice[lattice.N - row + 1, lattice.N - col + 1]] = lattice[row, col]
-                    result[lattice[col, lattice.N - row + 1]] = lattice[row, col]
+            for row in range(1, lat.N // 2 + 1):
+                for col in range(1, lat.N // 2 + parity + 1):
+                    result[lat[lat.N - col + 1, row]] = lat[row, col]
+                    result[lat[lat.N - row + 1, lat.N - col + 1]] = lat[row, col]
+                    result[lat[col, lat.N - row + 1]] = lat[row, col]
         case _:
             raise NotImplementedError('TODO: implement symmetry case')
     return result
@@ -246,14 +248,14 @@ def create_png(N: int, placed_points: Lattice.PointList):
         pixrow = pixrow + (0, 0, 0)
         for col in range(1,N+1):
             if Lattice.Point(row, col) in placed_points:
-                for xrepeat in range(PNG_FACTOR):
+                for _ in range(PNG_FACTOR):
                     pixrow = pixrow + (255, 0, 0)
                 pixrow = pixrow + (0, 0, 0)
             else:
-                for xrepeat in range(PNG_FACTOR):
+                for _ in range(PNG_FACTOR):
                     pixrow = pixrow + (255, 255, 255)
                 pixrow = pixrow + (0, 0, 0)
-        for yrepeat in range(PNG_FACTOR):  
+        for _ in range(PNG_FACTOR):  
             img.append(pixrow)
         pixrow = ()
         for _ in range(width):
@@ -269,73 +271,67 @@ def create_png(N: int, placed_points: Lattice.PointList):
 # ----------------------------------------------------- ENCODE --------------------------------------------------------
 #region
 
-def encode(N: int, symmetry: Symmetry):
+Variable: TypeAlias = int
+VariablePair: TypeAlias = tuple[Variable]
+Clause: TypeAlias = tuple[Variable]
+ClauseSet: TypeAlias = set[Clause]
+
+def encode(N: int, sym: Symmetry):
     """Encodes the no-three-in-line problem as a SAT problem"""
-    
-    # Containers to collect the necessary vars and clauses
     nof_vars = 0
-    cls: List[List[int]] = []
+    clauses: ClauseSet = set()
+    lat = Lattice(N)
+    point_map: Dict[Lattice.Point, int] = {}
+    pair_map: Dict[VariablePair, int] = {}
+    mirror_map = calc_equiv_points(lat, sym)
 
-    # We need constraints for both points and pairs, and we use these maps to know which pt/pair is which var
-    point_to_var_map: Dict[Lattice.Point, int] = {}
-    pair_to_var_map: Dict[Tuple[Lattice.Point, Lattice.Point], int] = {}
-
-    # Construct the lattice and the point symmetry map.
-    lattice = Lattice(N)
-    mirror_map = calc_equiv_points(lattice, symmetry)
-    
-    # Collect all the vars for the points
-    for pt in lattice.points:
+    # Introduce SAT-variables for non-mirrored lattice points
+    for pt in lat.points:
         if pt not in mirror_map:
             nof_vars += 1
-            point_to_var_map[pt] = nof_vars
-    for pt in lattice.points:
+            point_map[pt] = nof_vars
+    for pt in lat.points:
         if pt in mirror_map:
             orig_pt = mirror_map[pt]
-            orig_var = point_to_var_map[orig_pt]
-            point_to_var_map[pt] = orig_var
-
-    # Collect all vars and clauses for the pairs and their relationship with points
-    for line in lattice.lines:
-        points_on_line = lattice.expand_line(line)
-        
-        # We can ignore slanted lines with only two points on it, since this is no 3 in line
+            orig_var = point_map[orig_pt]
+            point_map[pt] = orig_var
+    
+    # Introduce SAT-variables and SAT-clauses for unique pairs of points on lattice lines
+    for line in lat.lines:
+        points_on_line = lat.expand_line(line)
         if line.is_slanted and len(points_on_line) == 2:
             continue
-
-        # Create the vars for the pairs
-        vars_for_line: List[int] = []
+        unique_pairs: Set[VariablePair] = set()
         for pair in combinations(points_on_line, 2):
+            var_1st = point_map[pair[0]]
+            var_2nd = point_map[pair[1]]
+            proper_pair = VariablePair(sorted((var_1st, var_2nd)))
+            unique_pairs.add(proper_pair)
+        for pair in unique_pairs:
             nof_vars += 1
-            pair_to_var_map[pair] = nof_vars
-            vars_for_line.append(nof_vars)
-
-        # at least one of the pairs must be true on the hor/vert lines
-        if line.is_vertical or line.is_horizontal :
-            cls.append([pair_to_var_map[pair] for pair in combinations(points_on_line, 2)])
-        
-        # no pair of pairs can be true on any line, in particular on the current line
-        if len(vars_for_line) > 1:
-            for pair_of_pair in combinations(vars_for_line, 2):
-                cls.append([-pair_of_pair[0], -pair_of_pair[1]])
-        
-        # x_n = 1 iff its two points are set too (hence if x_n = -1, then at least one of the points is not set)
-        # note: pair_n <=> pt_i && pt_j SAME AS (-pair_n || pt_i) && (-pair_n || pt_j) && (-pt_i || -pt_j || pair_n)
-        for pair in combinations(points_on_line, 2):
-            pair_var = pair_to_var_map[pair]
-            pt1_var = point_to_var_map[pair[0]]
-            pt2_var = point_to_var_map[pair[1]]
-            cls.append([-pair_var, pt1_var])
-            cls.append([-pair_var, pt2_var])
-            cls.append([-pt1_var, -pt2_var, pair_var])
+            pair_map[pair] = nof_vars
+        if line.is_vertical or line.is_horizontal: # at least one pair
+            cls = Clause(sorted((pair_map[pair] for pair in unique_pairs)))
+            clauses.add(cls)
+        if len(unique_pairs) > 1: # at most one pair or pair
+            for pair_of_pair in combinations(unique_pairs, 2):
+                cls = Clause(sorted((-pair_map[pair_of_pair[0]], -pair_map[pair_of_pair[1]])))
+                clauses.add(cls)
+        for pair in unique_pairs:          # pair_n <=> pt_i && pt_j
+            pair_var = pair_map[pair]
+            pt1_var = pair[0]
+            pt2_var = pair[1]
+            clauses.add(Clause(sorted((-pair_var, pt1_var))))            # -pair_n || pt_i
+            clauses.add(Clause(sorted((-pair_var, pt2_var))))            # -pair_n || pt_j
+            clauses.add(Clause(sorted((-pt1_var, -pt2_var, pair_var))))  # -pt_i || -pt_j || pair_n
     
     # Output the DIMACS CNF representation
-    symm_str = "{}".format(symmetry).replace('Symmetry.', '')
+    symm_str = "{}".format(sym).replace('Symmetry.', '')
     print("c SAT-encoding for the no-three-in-line problem of dimension N=%d (%s)" % (N, symm_str))
     print("c Generated by n3ilsat.py")
-    print("p cnf %d %d" % (nof_vars, len(cls)))
-    for c in cls:
-        print(" ".join([str(l) for l in c])+" 0")
+    print("p cnf %d %d" % (nof_vars, len(clauses)))
+    for cls in clauses:
+        print(" ".join([str(var) for var in cls])+" 0")
 
 #endregion
 
@@ -380,7 +376,7 @@ def decode_rot4(N: int, sat_model: List[int]) -> Lattice.PointList:
     return placed_points
 
 
-def decode(N: int, config: Symmetry, emit_png: bool):
+def decode(N: int, sym: Symmetry, emit_png: bool):
     """Read SAT-model from stdin, check if proper solution, and optionally emit png"""
 
     # read SAT-model
@@ -391,7 +387,7 @@ def decode(N: int, config: Symmetry, emit_png: bool):
 
     # decode
     placed_points: Lattice.PointList
-    match config:
+    match sym:
        case Symmetry.IDEN: placed_points = decode_iden(N, sat_model)
        case Symmetry.ROT4: placed_points = decode_rot4(N, sat_model)
        case _:
@@ -440,13 +436,13 @@ if __name__ == '__main__':
         parser = create_options()
         args = parser.parse_args(args=argv)
         N = vars(args)['N']
-        config = Symmetry(vars(args)["symmetry"])
+        sym = Symmetry(vars(args)["symmetry"])
         emit_png = args.png
 
         # Run
         match vars(args)['verb']:
-            case 'encode': encode(N, config)
-            case 'decode': decode(N, config, emit_png)
+            case 'encode': encode(N, sym)
+            case 'decode': decode(N, sym, emit_png)
                 
     except Exception as ex:
         print('error')
