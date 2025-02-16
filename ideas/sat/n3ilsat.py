@@ -336,6 +336,42 @@ def create_line_map(lat: Lattice, point_map: PointMap, pair_map: PairMap) -> Lin
     return line_map
 
 
+def encode_rot4(lat: Lattice, point_map: PointMap, pair_map: PairMap, line_map: LineMap) -> ClauseSet:
+    result: ClauseSet = set()
+    parity = 1 if lat.N % 2 == 1 else 0
+    for i in range(1, lat.N // 2 + parity):
+        lines = lat.incidents(Lattice.Point(i, i))
+        hline: Lattice.Line = None
+        vline: Lattice.Line = None
+        for line in lines:
+            if line.is_horizontal:
+                hline = line
+            elif line.is_vertical:
+                vline = line
+            if (hline is not None) and (vline is not None):
+                break
+        points: Set[PointVar] = set()
+        points.update(lat.expand_line(hline))
+        points.update(lat.expand_line(vline))
+        vars: List[PointVar] = []
+        for pt in points:
+            is_not_left_of_i_i: bool = i <= pt.col <= lat.N // 2 + parity
+            is_not_down_of_i_i: bool = i <= pt.row <= lat.N // 2
+            if is_not_left_of_i_i and is_not_down_of_i_i:
+                vars.append(point_map[pt])
+        pair_vars: Set[PairVar] = set()
+        for pair in combinations(vars, 2):
+            var_1st = pair[0]
+            var_2nd = pair[1]
+            unique_pair = PointVarPair(sorted((var_1st, var_2nd)))
+            pair_vars.add(pair_map[unique_pair])
+        if len(pair_vars) > 1:
+            for pair_of_pair_vars in combinations(pair_vars, 2):
+                clause = Clause(sorted((-pair_of_pair_vars[0], -pair_of_pair_vars[1]))) # at most one pair
+                result.add(clause)
+    return result
+
+
 def encode(N: int, sym: Symmetry):
     """Encodes the no-three-in-line problem as a SAT problem"""
 
@@ -351,19 +387,28 @@ def encode(N: int, sym: Symmetry):
         if line not in line_map:
             continue
         pair_vars = line_map[line]
-        if line.is_vertical or line.is_horizontal: # at least one pair
-            clause = Clause(pair_vars)
+        if line.is_vertical or line.is_horizontal:
+            clause = Clause(pair_vars) # at least one pair on hor,vert lines
             clauses.add(clause)
-        if len(pair_vars) > 1: # at most one pair or pair
+        if len(pair_vars) > 1:
             for pair_of_pair_vars in combinations(pair_vars, 2):
-                clause = Clause(sorted((-pair_of_pair_vars[0], -pair_of_pair_vars[1])))
+                clause = Clause(sorted((-pair_of_pair_vars[0], -pair_of_pair_vars[1]))) # at most one pair on any line
                 clauses.add(clause)
     for point_var_pair, pair_var in pair_map.items():
         pt1_var = point_var_pair[0]
         pt2_var = point_var_pair[1]
-        clauses.add(Clause(sorted((-pair_var, pt1_var))))
-        clauses.add(Clause(sorted((-pair_var, pt2_var))))
-        clauses.add(Clause(sorted((-pt1_var, -pt2_var, pair_var))))
+        clauses.add(Clause(sorted((-pair_var, pt1_var))))               # (x,y) = 1 <=> x = 1 && y = 1
+        clauses.add(Clause(sorted((-pair_var, pt2_var))))               # :
+        clauses.add(Clause(sorted((-pt1_var, -pt2_var, pair_var))))     # :
+
+    # Transformations specific to the symmetry
+    match sym:
+       case Symmetry.IDEN: pass
+       case Symmetry.ROT4:
+            for clause in encode_rot4(lat, point_map, pair_map, line_map):
+                clauses.add(clause)
+       case _:
+           raise NotImplementedError('TODO: implement symmetry case')
 
     # Output the DIMACS CNF representation
     symm_str = "{}".format(sym).replace('Symmetry.', '')
