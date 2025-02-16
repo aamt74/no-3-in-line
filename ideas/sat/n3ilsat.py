@@ -272,20 +272,21 @@ def create_png(N: int, placed_points: Lattice.PointList):
 #region
 
 Variable: TypeAlias = int
-VariablePair: TypeAlias = tuple[Variable]
+PointVar: TypeAlias = Variable
+PairVar: TypeAlias = Variable
+PointVarPair: TypeAlias = tuple[PointVar]
+PointMap: TypeAlias = dict[Lattice.Point, PointVar]
+PairMap: TypeAlias = dict[PointVarPair, PairVar]
+LineMap: TypeAlias = dict[Lattice.Line, set[PairVar]]
 Clause: TypeAlias = tuple[Variable]
 ClauseSet: TypeAlias = set[Clause]
 
-def encode(N: int, sym: Symmetry):
-    """Encodes the no-three-in-line problem as a SAT problem"""
-    nof_vars = 0
-    clauses: ClauseSet = set()
-    lat = Lattice(N)
-    point_map: Dict[Lattice.Point, int] = {}
-    pair_map: Dict[VariablePair, int] = {}
-    mirror_map = calc_equiv_points(lat, sym)
 
-    # Introduce SAT-variables for non-mirrored lattice points
+def create_point_map(lat: Lattice, sym: Symmetry) -> PointMap:
+    """Creates variables for the lattice points, which form a bijection: (1,1) |-> 1, (1,2) |-> 2, etc"""
+    point_map: PointMap = {}
+    mirror_map = calc_equiv_points(lat, sym)
+    nof_vars = 0
     for pt in lat.points:
         if pt not in mirror_map:
             nof_vars += 1
@@ -295,41 +296,80 @@ def encode(N: int, sym: Symmetry):
             orig_pt = mirror_map[pt]
             orig_var = point_map[orig_pt]
             point_map[pt] = orig_var
-    
-    # Introduce SAT-variables and SAT-clauses for unique pairs of points on lattice lines
+    return point_map
+
+
+def create_pair_map(lat: Lattice, point_map: PointMap) -> PairMap:
+    """Creates variables for unique pairs throughout the lattice"""
+    pair_map: PairMap = {}
+    unique_pairs: Set[PointVarPair] = set()
+    nof_vars = len(set(point_map.values()))
     for line in lat.lines:
         points_on_line = lat.expand_line(line)
         if line.is_slanted and len(points_on_line) == 2:
             continue
-        unique_pairs: Set[VariablePair] = set()
         for pair in combinations(points_on_line, 2):
             var_1st = point_map[pair[0]]
             var_2nd = point_map[pair[1]]
-            proper_pair = VariablePair(sorted((var_1st, var_2nd)))
-            unique_pairs.add(proper_pair)
-        for pair in unique_pairs:
-            nof_vars += 1
-            pair_map[pair] = nof_vars
+            unique_pair = PointVarPair(sorted((var_1st, var_2nd)))
+            if unique_pair not in unique_pairs:
+                nof_vars += 1
+                pair_map[unique_pair] = nof_vars
+                unique_pairs.add(unique_pair)
+    return pair_map
+
+
+def create_line_map(lat: Lattice, point_map: PointMap, pair_map: PairMap) -> LineMap:
+    """Collects the variables for the pairs on a line """
+    line_map: LineMap = {}
+    for line in lat.lines:
+        unique_pair_vars: Set[PairVar] = set()
+        points_on_line = lat.expand_line(line)
+        if line.is_slanted and len(points_on_line) == 2:
+            continue
+        for pair in combinations(points_on_line, 2):
+            var_1st = point_map[pair[0]]
+            var_2nd = point_map[pair[1]]
+            unique_pair = PointVarPair(sorted((var_1st, var_2nd)))
+            unique_pair_vars.add(pair_map[unique_pair])
+        line_map[line] = unique_pair_vars
+    return line_map
+
+
+def encode(N: int, sym: Symmetry):
+    """Encodes the no-three-in-line problem as a SAT problem"""
+
+    # Transform to SAT:
+    lat = Lattice(N)
+    point_map = create_point_map(lat, sym)
+    pair_map = create_pair_map(lat, point_map)
+    line_map = create_line_map(lat, point_map, pair_map)
+    nof_point_vars = len(set(point_map.values()))
+    nof_pair_vars = len(set(pair_map.values()))
+    clauses: ClauseSet = set()
+    for line in lat.lines:
+        if line not in line_map:
+            continue
+        pair_vars = line_map[line]
         if line.is_vertical or line.is_horizontal: # at least one pair
-            cls = Clause(sorted((pair_map[pair] for pair in unique_pairs)))
-            clauses.add(cls)
-        if len(unique_pairs) > 1: # at most one pair or pair
-            for pair_of_pair in combinations(unique_pairs, 2):
-                cls = Clause(sorted((-pair_map[pair_of_pair[0]], -pair_map[pair_of_pair[1]])))
-                clauses.add(cls)
-        for pair in unique_pairs:          # pair_n <=> pt_i && pt_j
-            pair_var = pair_map[pair]
-            pt1_var = pair[0]
-            pt2_var = pair[1]
-            clauses.add(Clause(sorted((-pair_var, pt1_var))))            # -pair_n || pt_i
-            clauses.add(Clause(sorted((-pair_var, pt2_var))))            # -pair_n || pt_j
-            clauses.add(Clause(sorted((-pt1_var, -pt2_var, pair_var))))  # -pt_i || -pt_j || pair_n
-    
+            clause = Clause(pair_vars)
+            clauses.add(clause)
+        if len(pair_vars) > 1: # at most one pair or pair
+            for pair_of_pair_vars in combinations(pair_vars, 2):
+                clause = Clause(sorted((-pair_of_pair_vars[0], -pair_of_pair_vars[1])))
+                clauses.add(clause)
+    for point_var_pair, pair_var in pair_map.items():
+        pt1_var = point_var_pair[0]
+        pt2_var = point_var_pair[1]
+        clauses.add(Clause(sorted((-pair_var, pt1_var))))
+        clauses.add(Clause(sorted((-pair_var, pt2_var))))
+        clauses.add(Clause(sorted((-pt1_var, -pt2_var, pair_var))))
+
     # Output the DIMACS CNF representation
     symm_str = "{}".format(sym).replace('Symmetry.', '')
     print("c SAT-encoding for the no-three-in-line problem of dimension N=%d (%s)" % (N, symm_str))
     print("c Generated by n3ilsat.py")
-    print("p cnf %d %d" % (nof_vars, len(clauses)))
+    print("p cnf %d %d" % (nof_point_vars + nof_pair_vars, len(clauses)))
     for cls in clauses:
         print(" ".join([str(var) for var in cls])+" 0")
 
@@ -388,14 +428,14 @@ def decode(N: int, sym: Symmetry, emit_png: bool):
     # decode
     placed_points: Lattice.PointList
     match sym:
-       case Symmetry.IDEN: placed_points = decode_iden(N, sat_model)
-       case Symmetry.ROT4: placed_points = decode_rot4(N, sat_model)
+       case Symmetry.IDEN: placed_points = decode_iden(N, list(sat_model))
+       case Symmetry.ROT4: placed_points = decode_rot4(N, list(sat_model))
        case _:
            raise NotImplementedError('TODO: implement symmetry case')
 
     # verify
-    lattice = Lattice(N)
-    is_valid = lattice.verify(placed_points)
+    lat = Lattice(N)
+    is_valid = lat.verify(placed_points)
     print("valid" if is_valid else "not valid")
 
     # emit desired output formats
