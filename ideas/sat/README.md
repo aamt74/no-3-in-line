@@ -28,10 +28,28 @@ We make use of [anaconda](https://www.anaconda.com/products/distribution#Downloa
 
 ## Running
 
-To use the tool, run the following commands from an **anaconda** prompt:
+To use the tool, perform the following steps from an **anaconda** environment:
 
-```
-cd $ROOT
-conda activate n3ilsat
-./n3ilsat --help
-```
+- Activate environment:
+  ```
+  cd $ROOT
+  conda activate n3ilsat
+  ```
+- Encode a 'no-three-in-line' problem of some dimension and symmetry. The
+  following statements generate problems for N=10 and N=20 in 'iden' and 'rot4'
+  symmetry, respectively: 
+  ```
+  ./n3ilsat.py encode 10 . > problem.dimacs
+  ./n3ilsat.py encode 20 o > problem.dimacs
+  ```
+- Use an external SAT-solver to solve the problem. Here's an example of how to
+  use [glucose](https://github.com/audemard/glucose):
+  ```
+  glucose -model problem.dimacs solution.model
+  ```
+- Decode the model found by the external SAT-solver to verify it is indeed a
+  correct solution and, optionally, generate a nice png image. Make sure to
+  use the same parameters as you did when generating the problem. For example:
+  ```
+  cat solution.model | ./n3ilsat.py decode 20 o --png
+  ```
