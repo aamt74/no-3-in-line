@@ -133,7 +133,7 @@ class Lattice:
                     nof_pt_on_line[line] = 1
                 else:
                     nof_pt_on_line[line] += 1
-        is_valid = True
+        is_valid = len(nof_pt_on_line.values()) > 0
         for line, incidents in nof_pt_on_line.items():
             if line.is_slanted:
                 if incidents > 2:
@@ -272,25 +272,40 @@ def create_png(N: int, placed_points: Lattice.PointList):
 #region
 
 Variable: TypeAlias = int
-PointVar: TypeAlias = Variable
-PairVar: TypeAlias = Variable
-PointVarPair: TypeAlias = tuple[PointVar]
-PointMap: TypeAlias = dict[Lattice.Point, PointVar]
-PairMap: TypeAlias = dict[PointVarPair, PairVar]
-LineMap: TypeAlias = dict[Lattice.Line, set[PairVar]]
+PointMap: TypeAlias = dict[Lattice.Point, Variable]
+PairMap: TypeAlias = dict[tuple[Variable, Variable], Variable]
 Clause: TypeAlias = tuple[Variable]
-ClauseSet: TypeAlias = set[Clause]
 
 
-def create_point_map(lat: Lattice, sym: Symmetry) -> PointMap:
+class SATState:
+    """State class to be able to pass all values around as references across functions"""
+    def __init__(self):
+        self.nof_variables = 0
+        self.zero_var = 0
+        self.point_map: PointMap = {}
+        self.pair_map: PairMap = {}
+        self.clauses: Set[Clause] = set()
+    
+    def new_var(self) -> Variable:
+        """Introduce a new variable"""
+        self.nof_variables += 1
+        return self.nof_variables
+
+    def new_clause(self, cls: Clause):
+        """Add clause to rulebase"""
+        if len(cls) > 1:
+            self.clauses.add(tuple(sorted(cls)))
+        else:
+            self.clauses.add(cls)
+
+
+def create_point_map(state: SATState, lat: Lattice, sym: Symmetry) -> PointMap:
     """Creates variables for the lattice points, which form a bijection: (1,1) |-> 1, (1,2) |-> 2, etc"""
     point_map: PointMap = {}
     mirror_map = calc_equiv_points(lat, sym)
-    nof_vars = 0
     for pt in lat.points:
         if pt not in mirror_map:
-            nof_vars += 1
-            point_map[pt] = nof_vars
+            point_map[pt] = state.new_var()
     for pt in lat.points:
         if pt in mirror_map:
             orig_pt = mirror_map[pt]
@@ -299,77 +314,72 @@ def create_point_map(lat: Lattice, sym: Symmetry) -> PointMap:
     return point_map
 
 
-def create_pair_map(lat: Lattice, point_map: PointMap) -> PairMap:
-    """Creates variables for unique pairs throughout the lattice"""
-    pair_map: PairMap = {}
-    unique_pairs: Set[PointVarPair] = set()
-    nof_vars = len(set(point_map.values()))
-    for line in lat.lines:
-        points_on_line = lat.expand_line(line)
-        if line.is_slanted and len(points_on_line) == 2:
-            continue
-        for pair in combinations(points_on_line, 2):
-            var_1st = point_map[pair[0]]
-            var_2nd = point_map[pair[1]]
-            unique_pair = PointVarPair(sorted((var_1st, var_2nd)))
-            if unique_pair not in unique_pairs:
-                nof_vars += 1
-                pair_map[unique_pair] = nof_vars
-                unique_pairs.add(unique_pair)
-    return pair_map
+def create_zero_var(state: SATState) -> Variable:
+    zero_var = state.new_var()
+    state.clauses.add((-zero_var,))
+    return zero_var
 
 
-def create_line_map(lat: Lattice, point_map: PointMap, pair_map: PairMap) -> LineMap:
-    """Collects the variables for the pairs on a line """
-    line_map: LineMap = {}
-    for line in lat.lines:
-        unique_pair_vars: Set[PairVar] = set()
-        points_on_line = lat.expand_line(line)
-        if line.is_slanted and len(points_on_line) == 2:
-            continue
-        for pair in combinations(points_on_line, 2):
-            var_1st = point_map[pair[0]]
-            var_2nd = point_map[pair[1]]
-            unique_pair = PointVarPair(sorted((var_1st, var_2nd)))
-            unique_pair_vars.add(pair_map[unique_pair])
-        line_map[line] = unique_pair_vars
-    return line_map
+def encode_full_adder(var1: Variable, var2: Variable, var3: Variable, state: SATState) -> Tuple[Variable]:
+    """Adds the equiv of var1+var2+var3 = (carry, sum) to the state and returns the carry and sum as a tuple"""
+    svar = state.new_var()
+    cvar = state.new_var()
+    # svar <=> (var1 || var2 || var3) && (-var1 || -var2 || -var3)
+    state.new_clause((svar, -var1, var2, var3))
+    state.new_clause((svar, var1, -var2, var3))
+    state.new_clause((svar, var1, var2, -var3))
+    state.new_clause((svar, -var1, -var2, -var3))
+    state.new_clause((-svar, var1, var2, var3))
+    state.new_clause((-svar, var1, -var2, -var3))
+    state.new_clause((-svar, -var1, var2, -var3))
+    state.new_clause((-svar, -var1, -var2, var3))
+    # cvar <=> (var1 && var2) || (var1 && var3) || (var2 && var3)
+    state.new_clause((cvar, -var1, -var2, var3))
+    state.new_clause((cvar, -var1, var2, -var3))
+    state.new_clause((cvar, var1, -var2, -var3))
+    state.new_clause((cvar, -var1, -var2, -var3))
+    state.new_clause((-cvar, var1, var2, var3))
+    state.new_clause((-cvar, var1, var2, -var3))
+    state.new_clause((-cvar, var1, -var2, var3))
+    state.new_clause((-cvar, -var1, var2, var3))
+    return (cvar, svar)
 
 
-def encode_rot4(lat: Lattice, point_map: PointMap, pair_map: PairMap, line_map: LineMap) -> ClauseSet:
-    result: ClauseSet = set()
-    parity = 1 if lat.N % 2 == 1 else 0
-    for i in range(1, lat.N // 2 + parity):
-        lines = lat.incidents(Lattice.Point(i, i))
-        hline: Lattice.Line = None
-        vline: Lattice.Line = None
-        for line in lines:
-            if line.is_horizontal:
-                hline = line
-            elif line.is_vertical:
-                vline = line
-            if (hline is not None) and (vline is not None):
-                break
-        points: Set[PointVar] = set()
-        points.update(lat.expand_line(hline))
-        points.update(lat.expand_line(vline))
-        vars: List[PointVar] = []
-        for pt in points:
-            is_not_left_of_i_i: bool = i <= pt.col <= lat.N // 2 + parity
-            is_not_down_of_i_i: bool = i <= pt.row <= lat.N // 2
-            if is_not_left_of_i_i and is_not_down_of_i_i:
-                vars.append(point_map[pt])
-        pair_vars: Set[PairVar] = set()
-        for pair in combinations(vars, 2):
-            var_1st = pair[0]
-            var_2nd = pair[1]
-            unique_pair = PointVarPair(sorted((var_1st, var_2nd)))
-            pair_vars.add(pair_map[unique_pair])
-        if len(pair_vars) > 1:
-            for pair_of_pair_vars in combinations(pair_vars, 2):
-                clause = Clause(sorted((-pair_of_pair_vars[0], -pair_of_pair_vars[1]))) # at most one pair
-                result.add(clause)
-    return result
+def encode_half_adder(var1: Variable, var2: Variable, state: SATState) -> Tuple[Variable]:
+    """Adds the equiv of var1+var2 = (carry, sum) to the state and returns the carry and sum as a tuple"""
+    svar = state.new_var()
+    cvar = state.new_var()
+    # svar <=> (var1 || var2) && (-var1 || -var2)
+    state.new_clause((svar, -var1, var2))
+    state.new_clause((svar, var1, -var2))
+    state.new_clause((-svar, var1, var2))
+    state.new_clause((-svar, -var1, -var2))
+    # cvar <=> var1 && var2
+    state.new_clause((cvar, -var1, -var2))
+    state.new_clause((-cvar, var1))
+    state.new_clause((-cvar, var2))
+    return (cvar, svar)
+
+
+def encode_sum_mod4(state: SATState, points: Lattice.PointList) -> Tuple[Variable, Variable]:
+    """Sum the binary points modulo 4, so that all carries must be 0 and only two bits remain as a result"""
+    if (len(points) < 2):
+        raise ValueError('encode_sum with less than two operands')
+    # Emit two columns of ripple adders, to add mod 4
+    s1 = state.zero_var
+    s2 = state.zero_var
+    i = 0
+    while i < len(points):
+        var11 = s1
+        var12 = state.point_map[points[i]]
+        var13 = state.point_map[points[i+1]] if len(points) - i > 1 else state.zero_var
+        c1, s1 = encode_full_adder(var11, var12, var13, state)
+        var21 = s2
+        var22 = c1
+        c2, s2 = encode_half_adder(var21, var22, state)
+        state.new_clause((-c2,)) # otherwise certainly sum >= 4
+        i += 2
+    return (s2, s1) # s2 msb, s1 lsb
 
 
 def encode(N: int, sym: Symmetry):
@@ -377,45 +387,26 @@ def encode(N: int, sym: Symmetry):
 
     # Transform to SAT:
     lat = Lattice(N)
-    point_map = create_point_map(lat, sym)
-    pair_map = create_pair_map(lat, point_map)
-    line_map = create_line_map(lat, point_map, pair_map)
-    nof_point_vars = len(set(point_map.values()))
-    nof_pair_vars = len(set(pair_map.values()))
-    clauses: ClauseSet = set()
+    state = SATState()
+    state.point_map = create_point_map(state, lat, sym)
+    state.zero_var = create_zero_var(state)
     for line in lat.lines:
-        if line not in line_map:
+        points_on_line = lat.expand_line(line)
+        if line.is_slanted and len(points_on_line) <= 2:
             continue
-        pair_vars = line_map[line]
-        if line.is_vertical or line.is_horizontal:
-            clause = Clause(pair_vars) # at least one pair on hor,vert lines
-            clauses.add(clause)
-        if len(pair_vars) > 1:
-            for pair_of_pair_vars in combinations(pair_vars, 2):
-                clause = Clause(sorted((-pair_of_pair_vars[0], -pair_of_pair_vars[1]))) # at most one pair on any line
-                clauses.add(clause)
-    for point_var_pair, pair_var in pair_map.items():
-        pt1_var = point_var_pair[0]
-        pt2_var = point_var_pair[1]
-        clauses.add(Clause(sorted((-pair_var, pt1_var))))               # (x,y) = 1 <=> x = 1 && y = 1
-        clauses.add(Clause(sorted((-pair_var, pt2_var))))               # :
-        clauses.add(Clause(sorted((-pt1_var, -pt2_var, pair_var))))     # :
-
-    # Transformations specific to the symmetry
-    match sym:
-       case Symmetry.IDEN: pass
-       case Symmetry.ROT4:
-            for clause in encode_rot4(lat, point_map, pair_map, line_map):
-                clauses.add(clause)
-       case _:
-           raise NotImplementedError('TODO: implement symmetry case')
-
+        msb_var, lsb_var = encode_sum_mod4(state, points_on_line)
+        if line.is_slanted:
+            state.new_clause((-lsb_var, -msb_var))
+        else:
+            state.new_clause((-lsb_var,))
+            state.new_clause((msb_var,))
+    
     # Output the DIMACS CNF representation
     symm_str = "{}".format(sym).replace('Symmetry.', '')
     print("c SAT-encoding for the no-three-in-line problem of dimension N=%d (%s)" % (N, symm_str))
     print("c Generated by n3ilsat.py")
-    print("p cnf %d %d" % (nof_point_vars + nof_pair_vars, len(clauses)))
-    for cls in clauses:
+    print("p cnf %d %d" % (state.nof_variables, len(state.clauses)))
+    for cls in state.clauses:
         print(" ".join([str(var) for var in cls])+" 0")
 
 #endregion
@@ -467,7 +458,13 @@ def decode(N: int, sym: Symmetry, emit_png: bool):
     # read SAT-model
     model_str: str = ''
     for line in sys.stdin:
-        model_str += line.rstrip()
+        sline = line.rstrip()
+        if not sline.startswith('v'):
+            continue
+        sline = sline.removeprefix('v ')
+        sline = ' ' + sline.replace('\n', ' ')
+        model_str += sline
+    model_str = model_str.strip()
     sat_model = [int(x) for x in model_str.split(' ')]
 
     # decode
