@@ -1,37 +1,44 @@
 #!/usr/bin/env python
 
 # ---------------------------------------------------- IMPORTS --------------------------------------------------------
-#region
+# region
 
-import sys, argparse, shlex, os, math, png
+import sys
+import argparse
+import shlex
+import os
+import math
+import png
 from itertools import combinations
 from typing import Set, TypeAlias, Tuple, Dict, List
 from dataclasses import dataclass
 from enum import Enum
 
-#endregion
+# endregion
 
 # --------------------------------------------------- CONSTANTS -------------------------------------------------------
-#region
+# region
 
 OK = 0          # return code if program runs without error
 FAIL = 1        # return code if program runs erroneously
-EPSILON = 1e-10 # accuracy in comparing floating points
-PNG_FACTOR = 20 # in png every lattice point is scaled with this factor
+EPSILON = 1e-10  # accuracy in comparing floating points
+PNG_FACTOR = 20  # in png every lattice point is scaled with this factor
 
-#endregion
+# endregion
 
 # ---------------------------------------------------- LATTICE --------------------------------------------------------
-#region
+# region
+
 
 class Lattice:
     """N*N lattice with all of its lines"""
-    
+
     @dataclass(frozen=True)
     class Point:
         """A point in a lattice of size N*N, with 1 <= row,col <= N"""
         row: int
         col: int
+
         def __repr__(self):
             return '({0}, {1})'.format(self.row, self.col)
 
@@ -42,21 +49,26 @@ class Lattice:
         end2: "Lattice.Point"
         rise: int
         run: int
+
         @property
         def slope(self) -> float:
             return math.inf if self.run == 0 else 1.0 * self.rise / self.run
+
         @property
         def is_vertical(self) -> bool:
             return self.run == 0
+
         @property
         def is_horizontal(self) -> bool:
             return self.run != 0 and self.rise == 0
+
         @property
         def is_slanted(self) -> bool:
             return self.run != 0 and self.rise != 0
+
         def __repr__(self):
             return '{2:5.2f} : {0} --> {1}'.format(self.end1, self.end2, self.slope)
-    
+
     PointList: TypeAlias = list["Lattice.Point"]
     PointPair: TypeAlias = tuple["Lattice.Point", "Lattice.Point"]
     LineList: TypeAlias = list["Lattice.Line"]
@@ -71,22 +83,22 @@ class Lattice:
         """Index operator, used like 'pt = lattice_instance[row, col]'"""
         row, col = row_col
         return self._points[(row - 1) * self._N + (col - 1)]
-    
+
     @property
     def N(self) -> int:
         """Returns the value N of this N*N lattice"""
         return self._N
-    
+
     @property
     def points(self) -> "Lattice.PointList":
         """Returns all points in the lattice, ordered from left-bottom to right-upper"""
         return self._points
-    
+
     @property
     def lines(self) -> "Lattice.LineList":
         """Returns all lines in the lattice, ordered on slope ascendingly"""
         return self._lines
-    
+
     def expand_line(self, line: "Lattice.Line") -> PointList:
         """Enumerates all points on a line within the lattice"""
         points_on_line: Lattice.PointList = []
@@ -113,7 +125,7 @@ class Lattice:
             return points_on_line
         else:
             raise ValueError("Line created from a single point?")
-    
+
     def incidents(self, point: "Lattice.Point") -> LineList:
         """Enumerates all lines a point is incident with"""
         result: Lattice.LineList = []
@@ -141,7 +153,7 @@ class Lattice:
                     print(incidents)
                     is_valid = False
                     break
-            else: # hor or ver line
+            else:  # hor or ver line
                 if incidents != 2:
                     is_valid = False
                     break
@@ -154,7 +166,7 @@ class Lattice:
                 pt = Lattice.Point(row, col)
                 points.append(pt)
         return points
-    
+
     def _create_lines(self) -> LineList:
         lines: Set[Lattice.Line] = set()  # use set so that the extremes uniquely determine a lines!
         for i in range(len(self._points)):
@@ -166,7 +178,7 @@ class Lattice:
         sorted = list(lines)
         sorted.sort(key=lambda x: x.slope)
         return sorted
-    
+
     def _calc_slope(self, pt_from: "Lattice.Point", pt_to: "Lattice.Point") -> Tuple[int, int]:
         rise = pt_to.row - pt_from.row
         run = pt_to.col - pt_from.col
@@ -178,27 +190,28 @@ class Lattice:
         return (rise, run)
 
     def _calc_extremes(self, pt1: "Lattice.Point", pt2: "Lattice.Point", rise: int, run: int) -> PointPair:
-        if pt1.col > pt2.col: # make sure column is going up
+        if pt1.col > pt2.col:  # make sure column is going up
             pt1, pt2 = pt2, pt1
-        if run == 0: # vertical
+        if run == 0:  # vertical
             return (Lattice.Point(row=1, col=pt1.col),
                     Lattice.Point(row=self._N, col=pt1.col))
-        elif rise == 0: # horizontal
+        elif rise == 0:  # horizontal
             return (Lattice.Point(row=pt1.row, col=1),
                     Lattice.Point(row=pt1.row, col=self._N))
-        else: # slanted
-            end1 = Lattice.Point(**pt1.__dict__) # clone
+        else:  # slanted
+            end1 = Lattice.Point(**pt1.__dict__)  # clone
             while 1 <= end1.col - run <= self._N and 1 <= end1.row - rise <= self._N:
                 end1 = Lattice.Point(end1.row - rise, end1.col - run)
-            end2 = Lattice.Point(**pt2.__dict__) # clone
+            end2 = Lattice.Point(**pt2.__dict__)  # clone
             while 1 <= end2.col + run <= self._N and 1 <= end2.row + rise <= self._N:
                 end2 = Lattice.Point(end2.row + rise, end2.col + run)
             return (end1, end2)
 
-#endregion
+# endregion
 
 # ---------------------------------------------------- SYMMETRY -------------------------------------------------------
-#region
+# region
+
 
 class Symmetry(Enum):
     """Flammenkamp's symmetry configurations"""
@@ -230,10 +243,11 @@ def calc_equiv_points(lat: Lattice, sym: Symmetry) -> Dict[Lattice.Point, Lattic
             raise NotImplementedError('TODO: implement symmetry case')
     return result
 
-#endregion
+# endregion
 
 # ---------------------------------------------------- IMAGING --------------------------------------------------------
-#region
+# region
+
 
 def create_png(N: int, placed_points: Lattice.PointList):
     width = N * PNG_FACTOR + N + 1
@@ -243,10 +257,10 @@ def create_png(N: int, placed_points: Lattice.PointList):
     for _ in range(width):
         pixrow = pixrow + (0, 0, 0)
     img.append(pixrow)
-    for row in range(1,N+1):
+    for row in range(1, N+1):
         pixrow = ()
         pixrow = pixrow + (0, 0, 0)
-        for col in range(1,N+1):
+        for col in range(1, N+1):
             if Lattice.Point(row, col) in placed_points:
                 for _ in range(PNG_FACTOR):
                     pixrow = pixrow + (255, 0, 0)
@@ -255,21 +269,22 @@ def create_png(N: int, placed_points: Lattice.PointList):
                 for _ in range(PNG_FACTOR):
                     pixrow = pixrow + (255, 255, 255)
                 pixrow = pixrow + (0, 0, 0)
-        for _ in range(PNG_FACTOR):  
+        for _ in range(PNG_FACTOR):
             img.append(pixrow)
         pixrow = ()
         for _ in range(width):
             pixrow = pixrow + (0, 0, 0)
         img.append(pixrow)
-        
+
     with open('{}x{}-solution.png'.format(N, N), 'wb') as f:
         w = png.Writer(width, height, greyscale=False)
         w.write(f, img)
 
-#endregion
+# endregion
 
 # ----------------------------------------------------- ENCODE --------------------------------------------------------
-#region
+# region
+
 
 Variable: TypeAlias = int
 PointMap: TypeAlias = dict[Lattice.Point, Variable]
@@ -279,13 +294,14 @@ Clause: TypeAlias = tuple[Variable]
 
 class SATState:
     """State class to be able to pass all values around as references across functions"""
+
     def __init__(self):
         self.nof_variables = 0
         self.zero_var = 0
         self.point_map: PointMap = {}
         self.pair_map: PairMap = {}
         self.clauses: Set[Clause] = set()
-    
+
     def new_var(self) -> Variable:
         """Introduce a new variable"""
         self.nof_variables += 1
@@ -299,7 +315,7 @@ class SATState:
             self.clauses.add(cls)
 
 
-def create_point_map(state: SATState, lat: Lattice, sym: Symmetry) -> PointMap:
+def create_point_vars(state: SATState, lat: Lattice, sym: Symmetry) -> PointMap:
     """Creates variables for the lattice points, which form a bijection: (1,1) |-> 1, (1,2) |-> 2, etc"""
     point_map: PointMap = {}
     mirror_map = calc_equiv_points(lat, sym)
@@ -314,13 +330,40 @@ def create_point_map(state: SATState, lat: Lattice, sym: Symmetry) -> PointMap:
     return point_map
 
 
+def create_pair_vars(state: SATState, lat: Lattice) -> PairMap:
+    """Creates variables for unique pairs throughout the lattice"""
+    pair_map: PairMap = {}
+    # first create all pair variables x = (pt_i,pt_j):
+    unique_pairs: Set[tuple[Variable, Variable]] = set()
+    for line in lat.lines:
+        points_on_line = lat.expand_line(line)
+        if line.is_slanted and len(points_on_line) == 2:
+            continue
+        for pair in combinations(points_on_line, 2):
+            var1 = state.point_map[pair[0]]
+            var2 = state.point_map[pair[1]]
+            unique_pair = tuple(sorted((var1, var2)))
+            if unique_pair not in unique_pairs:
+                pair_map[unique_pair] = state.new_var()
+                unique_pairs.add(unique_pair)
+    # x = (pt_i,pt_j) = 1 <=> pt_i = 1 && pt_j = 1:
+    for point_var_pair, pair_var in pair_map.items():
+        pt1_var = point_var_pair[0]
+        pt2_var = point_var_pair[1]
+        state.new_clause((-pair_var, pt1_var))
+        state.new_clause((-pair_var, pt2_var))
+        state.new_clause((-pt1_var, -pt2_var, pair_var))
+    return pair_map
+
+
 def create_zero_var(state: SATState) -> Variable:
+    """Creates a single variable forced to be 0, so that it can be reused all over"""
     zero_var = state.new_var()
     state.clauses.add((-zero_var,))
     return zero_var
 
 
-def encode_full_adder(var1: Variable, var2: Variable, var3: Variable, state: SATState) -> Tuple[Variable]:
+def encode_full_adder(state: SATState, var1: Variable, var2: Variable, var3: Variable) -> Tuple[Variable]:
     """Adds the equiv of var1+var2+var3 = (carry, sum) to the state and returns the carry and sum as a tuple"""
     svar = state.new_var()
     cvar = state.new_var()
@@ -345,7 +388,7 @@ def encode_full_adder(var1: Variable, var2: Variable, var3: Variable, state: SAT
     return (cvar, svar)
 
 
-def encode_half_adder(var1: Variable, var2: Variable, state: SATState) -> Tuple[Variable]:
+def encode_half_adder(state: SATState, var1: Variable, var2: Variable) -> Tuple[Variable]:
     """Adds the equiv of var1+var2 = (carry, sum) to the state and returns the carry and sum as a tuple"""
     svar = state.new_var()
     cvar = state.new_var()
@@ -361,25 +404,45 @@ def encode_half_adder(var1: Variable, var2: Variable, state: SATState) -> Tuple[
     return (cvar, svar)
 
 
-def encode_sum_mod4(state: SATState, points: Lattice.PointList) -> Tuple[Variable, Variable]:
+def encode_sum_mod4(state: SATState, line: Lattice.Line, points: Lattice.PointList):
     """Sum the binary points modulo 4, so that all carries must be 0 and only two bits remain as a result"""
-    if (len(points) < 2):
-        raise ValueError('encode_sum with less than two operands')
-    # Emit two columns of ripple adders, to add mod 4
-    s1 = state.zero_var
-    s2 = state.zero_var
+    s1 = state.zero_var  # 1st column in a 2-column ripple adder of several propagating layers, s.t. we add mod 4
+    s2 = state.zero_var  # 2nd   "
     i = 0
     while i < len(points):
         var11 = s1
         var12 = state.point_map[points[i]]
         var13 = state.point_map[points[i+1]] if len(points) - i > 1 else state.zero_var
-        c1, s1 = encode_full_adder(var11, var12, var13, state)
+        c1, s1 = encode_full_adder(state, var11, var12, var13)
         var21 = s2
         var22 = c1
-        c2, s2 = encode_half_adder(var21, var22, state)
-        state.new_clause((-c2,)) # otherwise certainly sum >= 4
+        c2, s2 = encode_half_adder(state, var21, var22)
+        state.new_clause((-c2,))  # otherwise certainly sum >= 4
         i += 2
-    return (s2, s1) # s2 msb, s1 lsb
+    msb_var = s2
+    lsb_var = s1
+    if line.is_slanted:
+        state.new_clause((-lsb_var, -msb_var))
+    else:
+        state.new_clause((-lsb_var,))
+        state.new_clause((msb_var,))
+
+
+def encode_pair_bounds(state: SATState, line: Lattice.Line, points: Lattice.PointList):
+    """Hor/Vert lines need at least one pair of points set, but any line cannot have more than one pair of pairs"""
+    unique_pair_vars: Set[Variable] = set()
+    for pair in combinations(points, 2):
+        var1 = state.point_map[pair[0]]
+        var2 = state.point_map[pair[1]]
+        unique_pair = tuple(sorted((var1, var2)))
+        unique_pair_vars.add(state.pair_map[unique_pair])
+    # at least one pair on hor,vert lines:
+    if line.is_vertical or line.is_horizontal:
+        state.new_clause(tuple(unique_pair_vars))
+    # at most one pair of pairs on any line:
+    if len(unique_pair_vars) > 1:
+        for pair_of_pair_vars in combinations(unique_pair_vars, 2):
+            state.new_clause((-pair_of_pair_vars[0], -pair_of_pair_vars[1]))
 
 
 def encode(N: int, sym: Symmetry):
@@ -388,20 +451,17 @@ def encode(N: int, sym: Symmetry):
     # Transform to SAT:
     lat = Lattice(N)
     state = SATState()
-    state.point_map = create_point_map(state, lat, sym)
+    state.point_map = create_point_vars(state, lat, sym)
+    # state.pair_map = create_pair_vars(state, lat)
     state.zero_var = create_zero_var(state)
     for line in lat.lines:
         points_on_line = lat.expand_line(line)
-        if line.is_slanted and len(points_on_line) <= 2:
+        if line.is_slanted and len(points_on_line) == 2:
             continue
-        msb_var, lsb_var = encode_sum_mod4(state, points_on_line)
-        if line.is_slanted:
-            state.new_clause((-lsb_var, -msb_var))
-        else:
-            state.new_clause((-lsb_var,))
-            state.new_clause((msb_var,))
-    
-    # Output the DIMACS CNF representation
+        encode_sum_mod4(state, line, points_on_line)
+        # encode_pair_bounds(state, line, points_on_line)
+
+    # Output the DIMACS CNF representation:
     symm_str = "{}".format(sym).replace('Symmetry.', '')
     print("c SAT-encoding for the no-three-in-line problem of dimension N=%d (%s)" % (N, symm_str))
     print("c Generated by n3ilsat.py")
@@ -409,10 +469,11 @@ def encode(N: int, sym: Symmetry):
     for cls in state.clauses:
         print(" ".join([str(var) for var in cls])+" 0")
 
-#endregion
+# endregion
 
 # ----------------------------------------------------- DECODE --------------------------------------------------------
-#region
+# region
+
 
 def decode_iden(N: int, sat_model: List[int]) -> Lattice.PointList:
     """Decodes the sat model, knowing that it was generated with identity symmetry"""
@@ -470,10 +531,10 @@ def decode(N: int, sym: Symmetry, emit_png: bool):
     # decode
     placed_points: Lattice.PointList
     match sym:
-       case Symmetry.IDEN: placed_points = decode_iden(N, list(sat_model))
-       case Symmetry.ROT4: placed_points = decode_rot4(N, list(sat_model))
-       case _:
-           raise NotImplementedError('TODO: implement symmetry case')
+        case Symmetry.IDEN: placed_points = decode_iden(N, list(sat_model))
+        case Symmetry.ROT4: placed_points = decode_rot4(N, list(sat_model))
+        case _:
+            raise NotImplementedError('TODO: implement symmetry case')
 
     # verify
     lat = Lattice(N)
@@ -481,13 +542,14 @@ def decode(N: int, sym: Symmetry, emit_png: bool):
     print("valid" if is_valid else "not valid")
 
     # emit desired output formats
-    if emit_png:    
+    if emit_png:
         create_png(N, placed_points)
 
-#endregion
+# endregion
 
 # -------------------------------------------------- APPLICATION ------------------------------------------------------
-#region
+# region
+
 
 def create_options() -> argparse.ArgumentParser:
     """Setup the options that the application accepts"""
@@ -525,9 +587,9 @@ if __name__ == '__main__':
         match vars(args)['verb']:
             case 'encode': encode(N, sym)
             case 'decode': decode(N, sym, emit_png)
-                
+
     except Exception as ex:
         print('error')
         sys.exit(FAIL)
 
-#endregion
+# endregion
