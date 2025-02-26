@@ -399,8 +399,9 @@ def encode_half_adder(state: SATState, var1: Variable, var2: Variable) -> Tuple[
     state.new_clause((-svar, -var1, -var2))
     # cvar <=> var1 && var2
     state.new_clause((cvar, -var1, -var2))
-    state.new_clause((-cvar, var1))
-    state.new_clause((-cvar, var2))
+    # state.new_clause((cvar, -var1, -var2))        # (cvar will be forced to 0 in this very specific application,
+    # state.new_clause((-cvar, var1))               #  therefore we only need one direction)
+    # state.new_clause((-cvar, var2))
     return (cvar, svar)
 
 
